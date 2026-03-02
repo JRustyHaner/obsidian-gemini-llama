@@ -871,5 +871,192 @@ export default class ObsidianGeminiSettingTab extends PluginSettingTab {
 					});
 			}
 		}
+
+		// Ollama Settings
+		new Setting(containerEl).setName('Local Models (Ollama)').setHeading();
+
+		new Setting(containerEl)
+			.setName('Enable Ollama')
+			.setDesc('Use local models via Ollama as a provider or fallback. Download at https://ollama.ai')
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.ollama.enabled).onChange(async (value) => {
+					this.plugin.settings.ollama.enabled = value;
+					await this.plugin.saveSettings();
+					this.display(); // Refresh to show/hide dependent settings
+				})
+			);
+
+		if (this.plugin.settings.ollama.enabled) {
+			new Setting(containerEl)
+				.setName('Ollama Endpoint')
+				.setDesc('Default: http://localhost:11434. Change if running on a different host/port.')
+				.addText((text) =>
+					text
+						.setPlaceholder('http://localhost:11434')
+						.setValue(this.plugin.settings.ollama.endpoint)
+						.onChange(async (value) => {
+							this.plugin.settings.ollama.endpoint = value || 'http://localhost:11434';
+							await this.plugin.saveSettings();
+						})
+				);
+
+			new Setting(containerEl)
+				.setName('Chat Model')
+				.setDesc('Model for agent chat and conversational features. Leave empty to use default.')
+				.addText((text) =>
+					text
+						.setPlaceholder('e.g., llama2, mistral, neural-chat')
+						.setValue(this.plugin.settings.ollama.models.chat || '')
+						.onChange(async (value) => {
+							this.plugin.settings.ollama.models.chat = value;
+							await this.plugin.saveSettings();
+						})
+				);
+
+			new Setting(containerEl)
+				.setName('Summary Model')
+				.setDesc('Model for summarizing content. Leave empty to use chat model.')
+				.addText((text) =>
+					text
+						.setPlaceholder('e.g., llama2, mistral')
+						.setValue(this.plugin.settings.ollama.models.summary || '')
+						.onChange(async (value) => {
+							this.plugin.settings.ollama.models.summary = value;
+							await this.plugin.saveSettings();
+						})
+				);
+
+			new Setting(containerEl)
+				.setName('Completions Model')
+				.setDesc('Model for inline code/text completions. Leave empty to use chat model.')
+				.addText((text) =>
+					text
+						.setPlaceholder('e.g., llama2, mistral')
+						.setValue(this.plugin.settings.ollama.models.completions || '')
+						.onChange(async (value) => {
+							this.plugin.settings.ollama.models.completions = value;
+							await this.plugin.saveSettings();
+						})
+				);
+
+			new Setting(containerEl)
+				.setName('Rewrite Model')
+				.setDesc('Model for text rewriting and editing. Leave empty to use chat model.')
+				.addText((text) =>
+					text
+						.setPlaceholder('e.g., llama2, mistral')
+						.setValue(this.plugin.settings.ollama.models.rewrite || '')
+						.onChange(async (value) => {
+							this.plugin.settings.ollama.models.rewrite = value;
+							await this.plugin.saveSettings();
+						})
+				);
+
+			new Setting(containerEl)
+				.setName('Embedding Model')
+				.setDesc('Model for generating embeddings (for local RAG). E.g., nomic-embed-text, all-minilm')
+				.addText((text) =>
+					text
+						.setPlaceholder('e.g., nomic-embed-text, all-minilm')
+						.setValue(this.plugin.settings.ollama.models.embedding || '')
+						.onChange(async (value) => {
+							this.plugin.settings.ollama.models.embedding = value;
+							await this.plugin.saveSettings();
+						})
+				);
+
+			// Provider Selection
+			new Setting(containerEl).setName('Provider Selection').setHeading();
+
+			new Setting(containerEl)
+				.setName('Chat Provider')
+				.setDesc('Provider to use for agent chat and conversational features')
+				.addDropdown((dropdown) => {
+					dropdown.addOption('gemini', 'Google Gemini');
+					dropdown.addOption('ollama', 'Local Ollama');
+					dropdown.setValue(this.plugin.settings.chatProvider || 'gemini');
+					dropdown.onChange(async (value) => {
+						this.plugin.settings.chatProvider = value as any;
+						await this.plugin.saveSettings();
+					});
+				});
+
+			new Setting(containerEl)
+				.setName('Summary Provider')
+				.setDesc('Provider to use for content summarization')
+				.addDropdown((dropdown) => {
+					dropdown.addOption('gemini', 'Google Gemini');
+					dropdown.addOption('ollama', 'Local Ollama');
+					dropdown.setValue(this.plugin.settings.summaryProvider || 'gemini');
+					dropdown.onChange(async (value) => {
+						this.plugin.settings.summaryProvider = value as any;
+						await this.plugin.saveSettings();
+					});
+				});
+
+			new Setting(containerEl)
+				.setName('Completions Provider')
+				.setDesc('Provider to use for inline completions')
+				.addDropdown((dropdown) => {
+					dropdown.addOption('gemini', 'Google Gemini');
+					dropdown.addOption('ollama', 'Local Ollama');
+					dropdown.setValue(this.plugin.settings.completionsProvider || 'gemini');
+					dropdown.onChange(async (value) => {
+						this.plugin.settings.completionsProvider = value as any;
+						await this.plugin.saveSettings();
+					});
+				});
+
+			new Setting(containerEl)
+				.setName('Rewrite Provider')
+				.setDesc('Provider to use for text rewriting')
+				.addDropdown((dropdown) => {
+					dropdown.addOption('gemini', 'Google Gemini');
+					dropdown.addOption('ollama', 'Local Ollama');
+					dropdown.setValue(this.plugin.settings.rewriteProvider || 'gemini');
+					dropdown.onChange(async (value) => {
+						this.plugin.settings.rewriteProvider = value as any;
+						await this.plugin.saveSettings();
+					});
+				});
+
+			// Local RAG Settings
+			new Setting(containerEl).setName('Local Vault Search (Ollama Embeddings)').setHeading();
+
+			new Setting(containerEl)
+				.setName('Enable local RAG')
+				.setDesc('Index vault files locally using Ollama embeddings. Requires embedding model to be configured above.')
+				.addToggle((toggle) =>
+					toggle.setValue(this.plugin.settings.ragIndexing.enabled).onChange(async (value) => {
+						this.plugin.settings.ragIndexing.enabled = value;
+						await this.plugin.saveSettings();
+					})
+				);
+
+			if (this.plugin.settings.ragIndexing.enabled && this.plugin.settings.ragIndexing.provider === 'ollama') {
+				new Setting(containerEl)
+					.setName('Index Vault Now')
+					.setDesc('Build a semantic index of all vault files for search.')
+					.addButton((button) =>
+						button.setButtonText('Start Indexing').onClick(async () => {
+							new Notice('Starting vault indexing...');
+							// TODO: Implement indexing trigger
+						})
+					);
+
+				new Setting(containerEl)
+					.setName('Delete Local Index')
+					.setDesc('Remove the locally stored index cache. Vault will need to be re-indexed after.')
+					.addButton((button) =>
+						button
+							.setButtonText('Delete')
+							.setWarning()
+							.onClick(async () => {
+								new Notice('Deleting local RAG index...');
+								// TODO: Implement deletion trigger
+							})
+					);
+			}
+		}
 	}
 }
