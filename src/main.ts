@@ -31,6 +31,7 @@ import { SelectionActionService } from './services/selection-action-service';
 import { MCPManager } from './mcp/mcp-manager';
 import { MCPServerConfig } from './mcp/types';
 import { SkillManager } from './services/skill-manager';
+import { ModelProvider, RagProvider, ProviderModelConfig } from './api/types';
 
 // @ts-ignore
 import agentsMemoryTemplateContent from '../prompts/agentsMemoryTemplate.hbs';
@@ -48,6 +49,14 @@ export interface RagIndexingSettings {
 	excludeFolders: string[];
 	autoSync: boolean;
 	includeAttachments: boolean;
+	// RAG provider setting
+	provider: RagProvider;
+}
+
+export interface OllamaSettings {
+	endpoint: string;
+	models: ProviderModelConfig;
+	enabled: boolean;
 }
 
 export interface ObsidianGeminiSettings {
@@ -84,6 +93,13 @@ export interface ObsidianGeminiSettings {
 	// MCP server settings
 	mcpEnabled: boolean;
 	mcpServers: MCPServerConfig[];
+	// Ollama settings
+	ollama: OllamaSettings;
+	// Provider selection per feature
+	chatProvider: ModelProvider;
+	summaryProvider: ModelProvider;
+	completionsProvider: ModelProvider;
+	rewriteProvider: ModelProvider;
 }
 
 const DEFAULT_SETTINGS: ObsidianGeminiSettings = {
@@ -120,17 +136,35 @@ const DEFAULT_SETTINGS: ObsidianGeminiSettings = {
 	hasSeenV4Welcome: false,
 	// Version tracking for update notifications
 	lastSeenVersion: '0.0.0',
-	// RAG Indexing settings
+	// RAG indexing settings
 	ragIndexing: {
-		enabled: false,
+		enabled: true,
 		fileSearchStoreName: null,
+		provider: RagProvider.GEMINI,
 		excludeFolders: [],
 		autoSync: true,
 		includeAttachments: false,
 	},
+	// Provider selection per feature (default to Gemini for existing users)
+	chatProvider: ModelProvider.GEMINI,
+	summaryProvider: ModelProvider.GEMINI,
+	completionsProvider: ModelProvider.GEMINI,
+	rewriteProvider: ModelProvider.GEMINI,
 	// MCP server settings
 	mcpEnabled: false,
 	mcpServers: [],
+	// Ollama settings
+	ollama: {
+		endpoint: 'http://100.71.158.16:11434',
+		models: {
+			chat: '',
+			summary: '',
+			completions: '',
+			rewrite: '',
+			embedding: '',
+		},
+		enabled: false,
+	},
 };
 
 const MIGRATION_SECRET_NAME = 'gemini-scribe-api-key';
