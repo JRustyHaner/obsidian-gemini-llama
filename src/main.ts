@@ -57,6 +57,7 @@ export interface OllamaSettings {
 	endpoint: string;
 	models: ProviderModelConfig;
 	enabled: boolean;
+	apiKey?: string; // Optional API key for authentication (Bearer token or custom header)
 }
 
 export interface ObsidianGeminiSettings {
@@ -164,6 +165,7 @@ const DEFAULT_SETTINGS: ObsidianGeminiSettings = {
 			embedding: '',
 		},
 		enabled: false,
+		apiKey: '', // Optional API key for secured Ollama deployments
 	},
 };
 

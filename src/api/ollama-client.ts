@@ -25,6 +25,7 @@ export interface OllamaClientConfig {
 	temperature?: number;
 	topP?: number;
 	streamingEnabled?: boolean;
+	apiKey?: string; // Optional API key for authentication
 }
 
 /**
@@ -143,10 +144,22 @@ export class OllamaClient implements ModelApi {
 		const complete = (async (): Promise<ModelResponse> => {
 			const ollamaRequest = this.buildOllamaRequest(request, true);
 
+			// Debug logging
+			this.plugin?.logger.log('[OllamaClient] Request:', {
+				endpoint: `${this.config.endpoint}/api/chat`,
+				model: ollamaRequest.model,
+				messageCount: ollamaRequest.messages?.length,
+			});
+
 			try {
+				const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+				if (this.config.apiKey) {
+					headers['Authorization'] = `Bearer ${this.config.apiKey}`;
+				}
+
 				const response = await fetch(`${this.config.endpoint}/api/chat`, {
 					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
+					headers,
 					body: JSON.stringify(ollamaRequest),
 				});
 
@@ -332,9 +345,14 @@ export class OllamaClient implements ModelApi {
 	 * Fetch from Ollama API
 	 */
 	private async fetchOllama(endpoint: string, body: any): Promise<any> {
+		const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+		if (this.config.apiKey) {
+			headers['Authorization'] = `Bearer ${this.config.apiKey}`;
+		}
+
 		const response = await fetch(`${this.config.endpoint}${endpoint}`, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
+			headers,
 			body: JSON.stringify(body),
 		});
 

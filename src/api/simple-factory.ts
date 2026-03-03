@@ -166,6 +166,13 @@ export class GeminiClientFactory {
 		const settings = plugin.settings;
 		const ollamaSettings = settings.ollama;
 
+		plugin.logger.log('[Factory] Creating Ollama client:', {
+			useCase,
+			enabled: ollamaSettings.enabled,
+			endpoint: ollamaSettings.endpoint,
+			chatModel: ollamaSettings.models.chat,
+		});
+
 		if (!ollamaSettings.enabled) {
 			plugin.logger.warn('Ollama selected but not enabled, falling back to Gemini');
 			return this.createGeminiClient(plugin, useCase, overrides);
@@ -176,6 +183,7 @@ export class GeminiClientFactory {
 		switch (useCase) {
 			case ModelUseCase.CHAT:
 				modelName = ollamaSettings.models.chat || getDefaultModelForRole('chat');
+				plugin.logger.log('[Factory] Chat model resolved to:', modelName);
 				break;
 			case ModelUseCase.SUMMARY:
 				modelName = ollamaSettings.models.summary || getDefaultModelForRole('summary');
@@ -200,6 +208,7 @@ export class GeminiClientFactory {
 			temperature: settings.temperature ?? 0.7,
 			topP: settings.topP ?? 0.95,
 			streamingEnabled: settings.streamingEnabled ?? true,
+			apiKey: ollamaSettings.apiKey, // Pass API key if configured
 		};
 
 		// Create prompts and client

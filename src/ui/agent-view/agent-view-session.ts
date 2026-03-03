@@ -227,7 +227,7 @@ User: ${history[0].message}`;
 				const response = await modelApi.generateModelResponse({
 					userMessage: titlePrompt,
 					conversationHistory: [],
-					model: this.plugin.settings.chatModelName,
+					// Don't override model - let the factory-created client use its configured model
 					prompt: titlePrompt,
 					renderContent: false,
 				});

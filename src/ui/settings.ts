@@ -901,6 +901,19 @@ export default class ObsidianGeminiSettingTab extends PluginSettingTab {
 				);
 
 			new Setting(containerEl)
+				.setName('API Key (Optional)')
+				.setDesc('For secured Ollama deployments or LM Studio. Leave empty if no authentication required.')
+				.addText((text) =>
+					text
+						.setPlaceholder('Bearer token or API key')
+						.setValue(this.plugin.settings.ollama.apiKey || '')
+						.onChange(async (value) => {
+							this.plugin.settings.ollama.apiKey = value;
+							await this.plugin.saveSettings();
+						})
+				);
+
+			new Setting(containerEl)
 				.setName('Chat Model')
 				.setDesc('Model for agent chat and conversational features. Leave empty to use default.')
 				.addText((text) =>

@@ -408,7 +408,8 @@ To reference an attachment in your response, use the path shown above.`;
 				const request: ExtendedModelRequest = {
 					userMessage: message,
 					conversationHistory: conversationHistory,
-					model: modelConfig.model || this.plugin.settings.chatModelName,
+					// Note: Don't override model here - the factory-created client is already
+					// configured with the correct model based on provider settings
 					temperature: modelConfig.temperature ?? this.plugin.settings.temperature,
 					topP: modelConfig.topP ?? this.plugin.settings.topP,
 					prompt: additionalInstructions, // Additional context and instructions
