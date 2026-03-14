@@ -24,6 +24,9 @@ export interface FallbackConfig {
 	primary: ModelApi;
 	fallback: ModelApi | null;
 	logger?: any;
+	plugin?: ObsidianGemini | null;
+	primaryName?: string;
+	fallbackName?: string;
 }
 
 /**
@@ -45,11 +48,17 @@ export class FallbackDecorator implements ModelApi {
 	private primary: ModelApi;
 	private fallback: ModelApi | null;
 	private logger?: any;
+	private plugin?: ObsidianGemini | null;
+	private primaryName: string;
+	private fallbackName: string;
 
 	constructor(config: FallbackConfig) {
 		this.primary = config.primary;
 		this.fallback = config.fallback;
 		this.logger = config.logger;
+		this.plugin = config.plugin ?? null;
+		this.primaryName = config.primaryName || 'primary';
+		this.fallbackName = config.fallbackName || 'fallback';
 	}
 
 	/**
@@ -76,11 +85,103 @@ export class FallbackDecorator implements ModelApi {
 				error instanceof Error ? error.message : String(error)
 			);
 
+			// Only allow a single fallback attempt per request
+			const alreadyFellBack = (request as any)?.__fallbackAttempted === true;
+			if (alreadyFellBack) {
+				// Already attempted fallback for this request - rethrow original error
+				throw error;
+			}
+			// Mark this request as having attempted fallback
 			try {
-				return await this.fallback.generateModelResponse(request);
+				(request as any).__fallbackAttempted = true;
+			} catch (e) {
+				// ignore
+			}
+
+			// Show fallback as a tool-execution style message in Agent UI if available
+			try {
+				const errMsg = error instanceof Error ? error.message : String(error);
+				const execId = `fallback-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+				try {
+					const modelName = (request as any)?.model || '';
+					const message = `Falling back to ${this.fallbackName} : ${modelName || 'unknown model'}`;
+					if (
+						this.plugin &&
+						(this.plugin as any).agentView &&
+						typeof (this.plugin as any).agentView.showToolExecution === 'function'
+					) {
+						// @ts-ignore
+						await (this.plugin as any).agentView.showToolExecution(
+							'provider-fallback',
+							{
+								primary: this.primaryName,
+								fallback: this.fallbackName,
+								model: modelName,
+								message,
+								error: errMsg,
+							},
+							execId
+						);
+					}
+				} catch (e) {
+					// ignore UI errors
+				}
+			} catch (e) {
+				// ignore UI errors
+			}
+
+			try {
+				const resp = await this.fallback.generateModelResponse(request);
+				// If agent view tool execution was shown, mark it completed
+				try {
+					try {
+						const execId2 = `fallback-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+						if (
+							this.plugin &&
+							(this.plugin as any).agentView &&
+							typeof (this.plugin as any).agentView.showToolResult === 'function'
+						) {
+							// @ts-ignore
+							await (this.plugin as any).agentView.showToolResult(
+								'provider-fallback',
+								{
+									success: true,
+									data: {
+										primary: this.primaryName,
+										fallback: this.fallbackName,
+										model: (request as any)?.model || '',
+									},
+								},
+								execId2
+							);
+						}
+					} catch (e) {
+						// ignore
+					}
+				} catch (e) {
+					// ignore
+				}
+				return resp;
 			} catch (fallbackError) {
-				// If fallback also fails, throw the original error
+				// If fallback also fails, show failure in agent UI then throw original error
 				this.logger?.error('Fallback provider also failed', fallbackError);
+				try {
+					const execId = `fallback-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+					if (
+						this.plugin &&
+						(this.plugin as any).agentView &&
+						typeof (this.plugin as any).agentView.showToolResult === 'function'
+					) {
+						// @ts-ignore
+						await (this.plugin as any).agentView.showToolResult(
+							'provider-fallback',
+							{ success: false, error: String(fallbackError) },
+							execId
+						);
+					}
+				} catch (e) {
+					// ignore
+				}
 				throw error;
 			}
 		}
@@ -139,15 +240,111 @@ export class FallbackDecorator implements ModelApi {
 				error instanceof Error ? error.message : String(error)
 			);
 
+			// Show fallback as a tool-execution style message in Agent UI if available
+			try {
+				const errMsg = error instanceof Error ? error.message : String(error);
+				try {
+					const modelName = (request as any)?.model || '';
+					const message = `Falling back to ${this.fallbackName} : ${modelName || 'unknown model'}`;
+					const execId = `fallback-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+					if (
+						this.plugin &&
+						(this.plugin as any).agentView &&
+						typeof (this.plugin as any).agentView.showToolExecution === 'function'
+					) {
+						// @ts-ignore
+						await (this.plugin as any).agentView.showToolExecution(
+							'provider-fallback',
+							{
+								primary: this.primaryName,
+								fallback: this.fallbackName,
+								model: modelName,
+								message,
+								error: errMsg,
+							},
+							execId
+						);
+					}
+				} catch (e) {
+					// ignore UI errors
+				}
+			} catch (e) {
+				// ignore UI errors
+			}
+
+			// Only allow a single fallback attempt per request
+			const alreadyFellBack = (request as any)?.__fallbackAttempted === true;
+			if (alreadyFellBack) {
+				throw error;
+			}
+			try {
+				(request as any).__fallbackAttempted = true;
+			} catch (e) {
+				// ignore
+			}
+
 			try {
 				const response = this.fallback.generateStreamingResponse?.(request, onChunk);
 				if (!response) {
 					// Fallback doesn't support streaming, fall back to non-streaming
-					return await this.fallback.generateModelResponse(request);
+					const resp = await this.fallback.generateModelResponse(request);
+					try {
+						const execId = `fallback-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+						if (
+							this.plugin &&
+							(this.plugin as any).agentView &&
+							typeof (this.plugin as any).agentView.showToolResult === 'function'
+						) {
+							// @ts-ignore
+							await (this.plugin as any).agentView.showToolResult(
+								'provider-fallback',
+								{ success: true, data: { primary: this.primaryName, fallback: this.fallbackName } },
+								execId
+							);
+						}
+					} catch (_) {
+						// ignore UI errors
+					}
+					return resp;
 				}
-				return await response.complete;
+				const resp = await response.complete;
+				try {
+					const execId = `fallback-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+					if (
+						this.plugin &&
+						(this.plugin as any).agentView &&
+						typeof (this.plugin as any).agentView.showToolResult === 'function'
+					) {
+						// @ts-ignore
+						await (this.plugin as any).agentView.showToolResult(
+							'provider-fallback',
+							{ success: true, data: { primary: this.primaryName, fallback: this.fallbackName } },
+							execId
+						);
+					}
+				} catch (_) {
+					// ignore UI errors
+				}
+				return resp;
 			} catch (fallbackError) {
 				this.logger?.error('Fallback streaming provider also failed', fallbackError);
+				try {
+					const execId = `fallback-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+					if (
+						this.plugin &&
+						(this.plugin as any).agentView &&
+						typeof (this.plugin as any).agentView.showToolResult === 'function'
+					) {
+						// @ts-ignore
+						await (this.plugin as any).agentView.showToolResult(
+							'provider-fallback',
+							{ success: false, error: String(fallbackError) },
+							execId
+						);
+					}
+				} catch (e) {
+					// ignore
+				}
 				throw error;
 			}
 		}

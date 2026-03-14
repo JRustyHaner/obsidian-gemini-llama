@@ -88,9 +88,24 @@ export class LocalRagService {
 	 * Initialize the service
 	 */
 	async initialize(): Promise<void> {
+		const ollamaSettings = this.plugin.settings.ollama;
 		const ollamaConfig: OllamaClientConfig = {
-			endpoint: this.plugin.settings.ollama.endpoint,
-			model: this.plugin.settings.ollama.models.embedding,
+			endpoints:
+				ollamaSettings.endpoints && ollamaSettings.endpoints.length > 0
+					? ollamaSettings.endpoints.map((ep) => ({
+							endpoint: ep.endpoint,
+							apiKey: ep.apiKey,
+							useLmStudioApi: ep.useLmStudioApi,
+						}))
+					: [
+							{
+								endpoint: ollamaSettings.endpoint || 'http://localhost:11434',
+								apiKey: (ollamaSettings as any).apiKey || '',
+								useLmStudioApi: ollamaSettings.useLmStudioApi || false,
+							},
+						],
+			primaryEndpointIndex: ollamaSettings.primaryEndpointIndex || 0,
+			model: ollamaSettings.models.embedding,
 		};
 
 		this.ollamaClient = new OllamaClient(ollamaConfig, undefined, this.plugin);

@@ -39,7 +39,7 @@ This release fixes a critical issue for new users:
   - **Ask about Selection**: Ask any question about selected text - right-click and choose "Ask about Selection"
 - **IDE-Style Completions:** Get real-time, context-aware text completions as you type, similar to IDEs. Accept completions with `Tab` or dismiss with any other key. This feature uses a dedicated Gemini model for optimized completion generation.
 - **Persistent Agent Sessions:** Store your agent conversation history directly in your vault as markdown files. Each session is stored in the `gemini-scribe/Agent-Sessions/` folder, making it easy to backup, version control, and continue conversations across sessions.
-- **Configurable Models:** Choose different Gemini models for chat, summarization, and completions, allowing you to tailor the AI's behavior to each task.
+- **Configurable Models & Provider Priority:** All model entries (chat, summary, completions, rewrite) are dropdowns populated from discovered models (Ollama, LM Studio, Gemini). Use the "Discover Models" button in settings to refresh the list. Manual entry is still supported. You can set a provider priority/fallback order for each use case (chat, summary, completions, rewrite), including Gemini API, Ollama, LM Studio, and custom local endpoints. The plugin will try providers in order for each request.
 - **Custom Prompt System:** Create reusable AI instruction templates for agent sessions, allowing you to customize the AI's behavior for different workflows (e.g., technical documentation, creative writing, research). Includes command palette commands for easy creation and management.
 - **Image Paste Support:** Paste images directly into the chat input to send them to Gemini for multimodal analysis. Images are automatically saved to your Obsidian attachment folder, displayed as thumbnails before sending, and the AI receives the image path for embedding in notes.
 - **MCP Server Support:** Connect to local [Model Context Protocol](https://modelcontextprotocol.io/) servers to extend the agent with external tools. Configure per-tool trust settings, and MCP tools integrate seamlessly with the existing confirmation flow and loop detection. Desktop only.
@@ -85,9 +85,10 @@ This release fixes a critical issue for new users:
     - Open Obsidian Settings.
     - Go to "Gemini Scribe" under "Community plugins".
     - **API Key:** Paste your Gemini API key here. Your key is stored securely using Obsidian's SecretStorage.
-    - **Chat Model:** Select the preferred Gemini model for chat interactions (e.g., `gemini-1.5-pro`).
-    - **Summary Model:** Select the preferred Gemini model for generating summaries (e.g., `gemini-1.5-flash`).
-    - **Completion Model:** Select the preferred model for IDE-style completions (e.g., `gemini-1.5-flash-8b`).
+    - **Chat Model:** Select the preferred model for chat interactions from a dropdown of discovered models (Gemini, Ollama, LM Studio, or manual entry).
+    - **Summary Model:** Select the preferred model for generating summaries from a dropdown of discovered models.
+    - **Completion Model:** Select the preferred model for IDE-style completions from a dropdown of discovered models.
+    - **Rewrite Model:** Select the preferred model for rewriting text from a dropdown of discovered models.
     - **Summary Frontmatter Key:** Specify the key to use when storing summaries in the frontmatter (default: `summary`).
     - **Your Name:** Enter your name, which the AI will use when addressing you.
     - **Chat History:**
@@ -100,7 +101,8 @@ This release fixes a critical issue for new users:
     - **Advanced Settings:** (Click "Show Advanced Settings" to reveal)
       - **Temperature:** Control AI creativity and randomness (0-2.0, automatically adjusted based on available models).
       - **Top P:** Control response diversity and focus (0-1.0).
-      - **Model Discovery:** Automatically fetch and update available Gemini models with their parameter limits.
+      - **Model Discovery:** Use the "Discover Models" button to fetch available models from Gemini, Ollama, or LM Studio. Dropdowns now store the canonical model ID while showing a human-readable label (for example, `Qwen 3 1.7b (qwen3:1.7b)`), so selected models remain valid across providers. If no models are found, check your endpoint and API key settings.
+      - **Provider Priority (Fallback Order):** Set the order of providers for each use case. Supported values: `gemini`, `ollama`, `lmstudio`, and any custom endpoint URL (e.g., `http://localhost:11434`). The plugin will use providers in the specified order for each feature.
       - **API Configuration:** Configure retry behavior and backoff delays.
       - **Tool Execution:** Control whether to stop agent execution on tool errors.
       - **Tool Loop Detection:** Prevent infinite tool execution loops.

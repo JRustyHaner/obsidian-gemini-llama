@@ -69,6 +69,12 @@ The plugin uses a simplified factory pattern (`GeminiClientFactory`) to create G
    - Folder drops recursively expand and classify all contained files
    - `InlineAttachment` (renamed from `ImageAttachment`) holds base64 data, MIME type, and optional vault path
    - Image attachments show thumbnails; non-image attachments show Lucide icon + filename label
+8. **Background Task Service** (`src/services/background-task-service.ts`, `src/ui/background-tasks-modal.ts`): Asynchronous task processing with system notifications
+   - Queue AI requests for background processing while Obsidian is running
+   - Cross-platform system notifications (desktop) and extended in-app notices (mobile)
+   - Task types: chat, summary, rewrite, custom prompts
+   - Task manager UI for monitoring progress and viewing results
+   - Automatic cleanup of old completed/failed tasks
 
 ### Model Configuration
 

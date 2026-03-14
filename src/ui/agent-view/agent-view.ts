@@ -73,6 +73,24 @@ export class AgentView extends ItemView {
 		this.ui = new AgentViewUI(this.app, this.plugin);
 	}
 
+	/**
+	 * Display a transient provider fallback indicator in the agent progress area
+	 */
+	public showProviderFallback(primary: string, fallback: string, message?: string) {
+		try {
+			const text = `Fallback: ${primary} → ${fallback}` + (message ? ` — ${message}` : '');
+			this.progress.update(text, 'waiting');
+			// Keep the progress visible briefly so users notice it
+			setTimeout(() => {
+				if (this.progress && this.progress.isVisible()) {
+					this.progress.setStatusTitle(text);
+				}
+			}, 50);
+		} catch (e) {
+			this.plugin.logger.debug('[AgentView] showProviderFallback failed', e);
+		}
+	}
+
 	getViewType(): string {
 		return VIEW_TYPE_AGENT;
 	}
@@ -394,9 +412,9 @@ To reference an attachment in your response, use the path shown above.`;
 				session: this.currentSession,
 			};
 			const availableTools = this.plugin.toolRegistry.getEnabledTools(toolContext);
-			this.plugin.logger.log('Available tools from registry:', availableTools);
-			this.plugin.logger.log('Number of tools:', availableTools.length);
-			this.plugin.logger.log(
+			this.plugin.logger.debug('Available tools from registry:', availableTools);
+			this.plugin.logger.debug('Number of tools:', availableTools.length);
+			this.plugin.logger.debug(
 				'Tool names:',
 				availableTools.map((t) => t.name)
 			);
@@ -496,6 +514,7 @@ To reference an attachment in your response, use the path shown above.`;
 									message: accumulatedMarkdown,
 									notePath: '',
 									created_at: new Date(),
+									metadata: response.metadata,
 								};
 								await this.messages.finalizeStreamingMessage(
 									modelMessageContainer,
@@ -527,6 +546,7 @@ To reference an attachment in your response, use the path shown above.`;
 									message: response.markdown,
 									notePath: '',
 									created_at: new Date(),
+									metadata: response.metadata,
 								};
 
 								// Finalize the streaming message with proper rendering
@@ -597,6 +617,7 @@ To reference an attachment in your response, use the path shown above.`;
 								message: response.markdown,
 								notePath: '',
 								created_at: new Date(),
+								metadata: response.metadata,
 							};
 							await this.displayMessage(aiEntry);
 

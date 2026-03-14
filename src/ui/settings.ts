@@ -372,6 +372,31 @@ export default class ObsidianGeminiSettingTab extends PluginSettingTab {
 					})
 			);
 
+		// Gemini Cost Monitor (lightweight)
+		try {
+			const costContainer = containerEl.createDiv({ cls: 'gemini-cost-monitor' });
+			costContainer.createEl('h4', { text: 'Gemini Cost Monitor' });
+			const costContent = costContainer.createDiv({ cls: 'gemini-cost-monitor-content' });
+			const updateCostDisplay = () => {
+				const totals = this.plugin.geminiCostMonitor?.getTotals?.() || { requests: 0, tokens: 0, estimatedCostUsd: 0 };
+				costContent.empty();
+				costContent.createEl('div', { text: `Requests: ${totals.requests}` });
+				costContent.createEl('div', { text: `Tokens: ${totals.tokens}` });
+				costContent.createEl('div', { text: `Estimated Cost (USD): $${totals.estimatedCostUsd.toFixed(6)}` });
+			};
+			updateCostDisplay();
+			const btnRow = costContainer.createDiv({ cls: 'gemini-cost-monitor-actions' });
+			const refreshBtn = btnRow.createEl('button', { text: 'Refresh' });
+			refreshBtn.onclick = () => updateCostDisplay();
+			const resetBtn = btnRow.createEl('button', { text: 'Reset' });
+			resetBtn.onclick = async () => {
+				this.plugin.geminiCostMonitor?.reset?.();
+				updateCostDisplay();
+				await this.plugin.saveSettings();
+			};
+		} catch (e) {
+			// Ignore UI errors
+		}
 		// Plugin State Folder
 		new Setting(containerEl)
 			.setName('Plugin State Folder')
@@ -887,44 +912,509 @@ export default class ObsidianGeminiSettingTab extends PluginSettingTab {
 			);
 
 		if (this.plugin.settings.ollama.enabled) {
-			new Setting(containerEl)
-				.setName('Ollama Endpoint')
-				.setDesc('Default: http://localhost:11434. Change if running on a different host/port.')
-				.addText((text) =>
+			// Title for endpoints configuration
+			const endpointsSectionEl = containerEl.createDiv();
+			endpointsSectionEl.createEl('h3', { text: 'Ollama Endpoints' });
+			const endpointsDesc = endpointsSectionEl.createEl('p', {
+				text: 'Each endpoint can have different models and API key requirements. Discover models for each endpoint individually.',
+			});
+			endpointsDesc.style.fontSize = '0.9em';
+			endpointsDesc.style.color = 'var(--text-muted)';
+
+			// Render existing endpoints
+			const endpoints = this.plugin.settings.ollama.endpoints || [];
+			for (let i = 0; i < endpoints.length; i++) {
+				const ep = endpoints[i];
+				const isPrimary = i === (this.plugin.settings.ollama.primaryEndpointIndex || 0);
+
+				// Endpoint section
+				const epDiv = containerEl.createDiv();
+				epDiv.style.border = '1px solid var(--divider-color)';
+				epDiv.style.borderRadius = '4px';
+				epDiv.style.padding = '12px';
+				epDiv.style.marginBottom = '12px';
+
+				// Header with index and primary badge
+				const headerDiv = epDiv.createDiv();
+				headerDiv.style.display = 'flex';
+				headerDiv.style.justifyContent = 'space-between';
+				headerDiv.style.alignItems = 'center';
+				headerDiv.style.marginBottom = '8px';
+
+				const titleSpan = headerDiv.createSpan({ text: `Endpoint ${i + 1}` });
+				titleSpan.style.fontWeight = 'bold';
+
+				if (isPrimary) {
+					const badge = headerDiv.createSpan({ text: 'PRIMARY' });
+					badge.style.fontSize = '0.8em';
+					badge.style.fontWeight = 'bold';
+					badge.style.color = '#fff';
+					badge.style.backgroundColor = 'var(--interactive-accent)';
+					badge.style.padding = '2px 6px';
+					badge.style.borderRadius = '3px';
+				}
+
+				// Endpoint URL
+				new Setting(epDiv).setName('URL').addText((text) =>
 					text
 						.setPlaceholder('http://localhost:11434')
-						.setValue(this.plugin.settings.ollama.endpoint)
+						.setValue(ep.endpoint)
 						.onChange(async (value) => {
-							this.plugin.settings.ollama.endpoint = value || 'http://localhost:11434';
-							await this.plugin.saveSettings();
+							if (value && endpoints[i]) {
+								endpoints[i].endpoint = value;
+								await this.plugin.saveSettings();
+							}
 						})
 				);
 
+				// API Key for this endpoint
+				new Setting(epDiv)
+					.setName('API Key (Optional)')
+					.setDesc(`Specific to this endpoint.`)
+					.addText((text) =>
+						text
+							.setPlaceholder('Leave empty if not required')
+							.setValue(ep.apiKey || '')
+							.onChange(async (value) => {
+								if (endpoints[i]) {
+									endpoints[i].apiKey = value;
+									await this.plugin.saveSettings();
+								}
+							})
+					);
+
+				// LM Studio API Toggle (per-endpoint)
+				new Setting(epDiv)
+					.setName('Use LM Studio API')
+					.setDesc('Enable if this is an LM Studio endpoint (uses OpenAI-compatible format)')
+					.addToggle((toggle) =>
+						toggle.setValue(ep.useLmStudioApi || false).onChange(async (value) => {
+							if (endpoints[i]) {
+								endpoints[i].useLmStudioApi = value;
+								await this.plugin.saveSettings();
+							}
+						})
+					);
+
+				// Discover button for this endpoint
+				new Setting(epDiv)
+					.setName('Discover Models')
+					.setDesc('Fetch available models from this endpoint')
+					.addButton((btn) =>
+						btn.setButtonText('Discover').onClick(async () => {
+							try {
+								const useLmStudio = ep.useLmStudioApi || false;
+								let apiUrl: string;
+								let parseFn: (data: any) => string[];
+
+								if (useLmStudio) {
+									// LM Studio API format - tries multiple endpoint variations
+									apiUrl = ep.endpoint.replace(/\/$/, '') + '/api/v1/models';
+									parseFn = (data: any) => {
+										// LM Studio can return models in multiple formats
+										// Format 1: { data: [ { id: "model-name" }, ... ] }
+										if (data.data && Array.isArray(data.data)) {
+											return data.data
+												.filter((m: any) => m.id || m.key || m.model || m.name)
+												.map((m: any) => (m.id || m.key || m.model || m.name || '').trim())
+												.filter(Boolean);
+										}
+										// Format 2: { models: [ { id: "model-name" }, ... ] } or { models: [ { key: "model-name" }, ... ] }
+										if (data.models && Array.isArray(data.models)) {
+											return data.models
+												.filter((m: any) => m.id || m.key || m.model || m.name)
+												.map((m: any) => (m.id || m.key || m.model || m.name || '').trim())
+												.filter(Boolean);
+										}
+										// Format 3: Direct array [ { id: "model-name" }, ... ]
+										if (Array.isArray(data)) {
+											return data
+												.filter((m: any) => m.id || m.key || m.model || m.name)
+												.map((m: any) => (m.id || m.key || m.model || m.name || '').trim())
+												.filter(Boolean);
+										}
+										// Format 4: { object_list: [...] }
+										if (data.object_list && Array.isArray(data.object_list)) {
+											return data.object_list
+												.filter((m: any) => m.id || m.key || m.model || m.name)
+												.map((m: any) => (m.id || m.key || m.model || m.name || '').trim())
+												.filter(Boolean);
+										}
+										return [];
+									};
+								} else {
+									// Ollama API format
+									apiUrl = ep.endpoint.replace(/\/$/, '') + '/api/tags';
+									parseFn = (data: any) => {
+										// Ollama returns { models: [ { name: "model-name" }, ... ] }
+										const models = data.models || [];
+										return models.map((m: any) => (m.name || m.model || m.id || '').trim()).filter(Boolean);
+									};
+								}
+
+								const headers: Record<string, string> = {};
+								if (ep.apiKey) {
+									headers['Authorization'] = `Bearer ${ep.apiKey}`;
+								}
+
+								this.plugin.logger.log(`[Discovery] Starting model discovery for endpoint ${i}:`, {
+									endpoint: apiUrl,
+									hasApiKey: !!ep.apiKey,
+									useLmStudio,
+								});
+
+								const abortController = new AbortController();
+								const timeoutId = setTimeout(() => abortController.abort(), 10000);
+
+								const response = await fetch(apiUrl, { headers, signal: abortController.signal }).finally(() =>
+									clearTimeout(timeoutId)
+								);
+								if (!response.ok) {
+									this.plugin.logger.error(`[Discovery] Endpoint returned error status:`, {
+										status: response.status,
+										statusText: response.statusText,
+										apiUrl,
+										useLmStudio,
+									});
+									throw new Error(
+										`Failed to reach endpoint: ${response.status} ${response.statusText}. Is ${useLmStudio ? 'LM Studio' : 'Ollama'} running at ${apiUrl}?`
+									);
+								}
+
+								const data = await response.json();
+								this.plugin.logger.debug(`[Discovery] Response received:`, {
+									dataKeys: Object.keys(data),
+									dataPreview: JSON.stringify(data).substring(0, 200),
+								});
+
+								const models = parseFn(data).filter(Boolean);
+
+								if (models.length === 0) {
+									this.plugin.logger.warn(`[Discovery] No models found in response`, {
+										apiUrl,
+										rawDataKeys: Object.keys(data),
+									});
+									throw new Error(`No models found on this endpoint. Make sure to pull/create models first.`);
+								}
+
+								this.plugin.logger.log(`[Discovery] Successfully discovered ${models.length} model(s):`, models);
+
+								if (endpoints[i]) {
+									endpoints[i].discoveredModels = models;
+									endpoints[i].lastDiscovered = Date.now();
+									await this.plugin.saveSettings();
+									this.display(); // Refresh to show discovered models
+									new Notice(`Discovered ${models.length} model(s) on endpoint ${i + 1}`);
+								}
+							} catch (error) {
+								this.plugin.logger.error(`[Discovery] Failed to discover models on endpoint ${i}:`, {
+									error: error instanceof Error ? error.message : String(error),
+									endpoint: ep.endpoint,
+									stack: error instanceof Error ? error.stack : undefined,
+								});
+								new Notice(`Failed to discover models: ${error instanceof Error ? error.message : String(error)}`);
+							}
+						})
+					);
+
+				// Show discovered models list
+				if (ep.discoveredModels && ep.discoveredModels.length > 0) {
+					const modelListDiv = epDiv.createDiv();
+					modelListDiv.style.padding = '8px';
+					modelListDiv.style.backgroundColor = 'var(--background-secondary)';
+					modelListDiv.style.borderRadius = '3px';
+					modelListDiv.style.marginTop = '8px';
+					modelListDiv.style.fontSize = '0.85em';
+
+					const modelLabel = modelListDiv.createEl('strong', { text: 'Available Models:' });
+					modelLabel.style.display = 'block';
+					modelLabel.style.marginBottom = '4px';
+
+					const modelList = modelListDiv.createEl('div', {
+						text: ep.discoveredModels.join(', '),
+					});
+					modelList.style.wordBreak = 'break-word';
+				}
+
+				// Primary endpoint selector
+				new Setting(epDiv)
+					.setName('Make Primary')
+					.setDesc('Use this endpoint as the default')
+					.addButton((btn) =>
+						btn
+							.setButtonText(isPrimary ? 'Current Primary' : 'Set as Primary')
+							.setDisabled(isPrimary)
+							.onClick(async () => {
+								this.plugin.settings.ollama.primaryEndpointIndex = i;
+								await this.plugin.saveSettings();
+								this.display();
+							})
+					);
+
+				// Remove button (disabled if only one endpoint)
+				if (endpoints.length > 1) {
+					new Setting(epDiv).setName('Remove Endpoint').addButton((btn) =>
+						btn
+							.setButtonText('Remove')
+							.setWarning()
+							.onClick(async () => {
+								endpoints.splice(i, 1);
+								// If we removed the primary, make first one primary
+								if (this.plugin.settings.ollama.primaryEndpointIndex >= endpoints.length) {
+									this.plugin.settings.ollama.primaryEndpointIndex = 0;
+								}
+								await this.plugin.saveSettings();
+								this.display();
+							})
+					);
+				}
+			}
+
+			// Add new endpoint button
 			new Setting(containerEl)
-				.setName('API Key (Optional)')
-				.setDesc('For secured Ollama deployments or LM Studio. Leave empty if no authentication required.')
-				.addText((text) =>
-					text
-						.setPlaceholder('Bearer token or API key')
-						.setValue(this.plugin.settings.ollama.apiKey || '')
-						.onChange(async (value) => {
-							this.plugin.settings.ollama.apiKey = value;
-							await this.plugin.saveSettings();
-						})
+				.setName('Add Endpoint')
+				.setDesc('Add a new Ollama or LM Studio endpoint')
+				.addButton((btn) =>
+					btn.setButtonText('+ Add Endpoint').onClick(async () => {
+						if (!this.plugin.settings.ollama.endpoints) {
+							this.plugin.settings.ollama.endpoints = [];
+						}
+						this.plugin.settings.ollama.endpoints.push({
+							endpoint: 'http://localhost:11434',
+							apiKey: '',
+							discoveredModels: [],
+						});
+						await this.plugin.saveSettings();
+						this.display();
+					})
 				);
 
+			// LM Studio API Toggle
+			new Setting(containerEl)
+				.setName('Use LM Studio API for Local Models')
+				.setDesc('Enable to route local model requests through LM Studio API endpoint (OpenAI compatible).')
+				.addToggle((toggle) => {
+					toggle.setValue(this.plugin.settings.ollama.useLmStudioApi || false).onChange(async (value) => {
+						this.plugin.settings.ollama.useLmStudioApi = value;
+						await this.plugin.saveSettings();
+					});
+				});
+
+			// Collect all discovered models from all endpoints
+			const allDiscoveredModels = new Map<string, { model: string; endpoints: number[] }>();
+			const allEndpoints = this.plugin.settings.ollama.endpoints || [];
+			for (let i = 0; i < allEndpoints.length; i++) {
+				const ep = allEndpoints[i];
+				if (ep.discoveredModels && ep.discoveredModels.length > 0) {
+					for (const model of ep.discoveredModels) {
+						if (!allDiscoveredModels.has(model)) {
+							allDiscoveredModels.set(model, { model, endpoints: [] });
+						}
+						allDiscoveredModels.get(model)!.endpoints.push(i + 1); // 1-indexed for display
+					}
+				}
+			}
+
+			// Display collected models info
+			if (allDiscoveredModels.size > 0) {
+				const modelsSection = containerEl.createDiv();
+				modelsSection.style.marginTop = '20px';
+				modelsSection.style.padding = '12px';
+				modelsSection.style.backgroundColor = 'var(--background-secondary)';
+				modelsSection.style.borderRadius = '4px';
+
+				const title = modelsSection.createEl('h4', { text: 'Discovered Models' });
+				title.style.marginTop = '0';
+				title.style.marginBottom = '8px';
+
+				const desc = modelsSection.createEl('p', {
+					text: 'Models discovered from all endpoints. Select below for different use cases. Note: Different endpoints may have different models available.',
+				});
+				desc.style.fontSize = '0.9em';
+				desc.style.color = 'var(--text-muted)';
+				desc.style.marginBottom = '12px';
+
+				const modelsList = modelsSection.createEl('div', {
+					text: Array.from(allDiscoveredModels.values())
+						.map((m) => `${m.model} (Endpoint${m.endpoints.length > 1 ? 's' : ''} ${m.endpoints.join(', ')})`)
+						.join(' · '),
+				});
+				modelsList.style.fontSize = '0.85em';
+				modelsList.style.wordBreak = 'break-word';
+			}
+			// Model autodiscovery UI
+			type LocalModelOption = { value: string; label: string };
+			let discoveredModels: LocalModelOption[] = [];
+			let dropdownRefs: Record<string, any> = {};
+
+			const toHumanReadableModelLabel = (modelId: string): string => {
+				const normalized = modelId
+					.replace(/^models\//, '')
+					.replace(/[:/_-]+/g, ' ')
+					.replace(/\s+/g, ' ')
+					.trim();
+				if (!normalized) return modelId;
+
+				const readable = normalized
+					.split(' ')
+					.filter(Boolean)
+					.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+					.join(' ');
+				return readable.toLowerCase() === modelId.toLowerCase() ? modelId : `${readable} (${modelId})`;
+			};
+
+			const getDiscoveredModelOptions = (rawData: any): LocalModelOption[] => {
+				const collections: any[][] = [];
+				if (Array.isArray(rawData?.data)) collections.push(rawData.data); // OpenAI/LM Studio style
+				if (Array.isArray(rawData?.models)) collections.push(rawData.models); // Some local APIs
+				if (Array.isArray(rawData?.tags)) collections.push(rawData.tags); // Ollama /api/tags
+				if (Array.isArray(rawData)) collections.push(rawData); // Direct array response
+
+				const optionsByValue = new Map<string, LocalModelOption>();
+				for (const collection of collections) {
+					for (const item of collection) {
+						const value = item?.id || item?.model || item?.name || item?.key || item?.tag || item?.value;
+
+						if (!value || typeof value !== 'string') {
+							continue;
+						}
+
+						const displayName = item?.display_name || item?.displayName;
+						const preferredLabel =
+							displayName && typeof displayName === 'string' && displayName.trim().length > 0
+								? `${displayName.trim()} (${value})`
+								: toHumanReadableModelLabel(value);
+
+						const existing = optionsByValue.get(value);
+						if (!existing || existing.label === toHumanReadableModelLabel(value)) {
+							optionsByValue.set(value, { value, label: preferredLabel });
+						}
+					}
+				}
+
+				return Array.from(optionsByValue.values()).sort((a, b) => a.label.localeCompare(b.label));
+			};
+
+			async function updateAllDropdowns(models: LocalModelOption[]) {
+				for (const key of Object.keys(dropdownRefs)) {
+					const dropdown = dropdownRefs[key];
+					if (dropdown) {
+						const currentValue = dropdown.getValue?.() || '';
+						while (dropdown.selectEl.options.length > 0) {
+							dropdown.selectEl.remove(0);
+						}
+						dropdown.addOption('', 'Manual entry');
+						for (const model of models) {
+							dropdown.addOption(model.value, model.label);
+						}
+						if (currentValue && !models.some((m) => m.value === currentValue)) {
+							dropdown.addOption(currentValue, `${currentValue} (current)`);
+						}
+						dropdown.setValue(currentValue);
+					}
+				}
+			}
+
+			// Chat Model Dropdown
 			new Setting(containerEl)
 				.setName('Chat Model')
-				.setDesc('Model for agent chat and conversational features. Leave empty to use default.')
-				.addText((text) =>
-					text
-						.setPlaceholder('e.g., llama2, mistral, neural-chat')
-						.setValue(this.plugin.settings.ollama.models.chat || '')
-						.onChange(async (value) => {
-							this.plugin.settings.ollama.models.chat = value;
-							await this.plugin.saveSettings();
-						})
-				);
+				.setDesc('Model for agent chat and conversational features.')
+				.addDropdown((dropdown) => {
+					dropdown.addOption('', 'Manual entry');
+
+					// Add all discovered models
+					for (const { model } of allDiscoveredModels.values()) {
+						dropdown.addOption(model, model);
+					}
+
+					dropdown.setValue(this.plugin.settings.ollama.models.chat || '');
+					dropdown.onChange(async (value) => {
+						this.plugin.settings.ollama.models.chat = value;
+						await this.plugin.saveSettings();
+					});
+					dropdownRefs['chat'] = dropdown;
+				});
+			// Summary Model Dropdown
+			new Setting(containerEl)
+				.setName('Summary Model')
+				.setDesc('Model for summarizing content.')
+				.addDropdown((dropdown) => {
+					dropdown.addOption('', 'Manual entry');
+
+					// Add all discovered models
+					for (const { model } of allDiscoveredModels.values()) {
+						dropdown.addOption(model, model);
+					}
+
+					dropdown.setValue(this.plugin.settings.ollama.models.summary || '');
+					dropdown.onChange(async (value) => {
+						this.plugin.settings.ollama.models.summary = value;
+						await this.plugin.saveSettings();
+					});
+					dropdownRefs['summary'] = dropdown;
+				});
+			// Completions Model Dropdown
+			new Setting(containerEl)
+				.setName('Completions Model')
+				.setDesc('Model for inline code/text completions.')
+				.addDropdown((dropdown) => {
+					dropdown.addOption('', 'Manual entry');
+
+					// Add all discovered models
+					for (const { model } of allDiscoveredModels.values()) {
+						dropdown.addOption(model, model);
+					}
+
+					dropdown.setValue(this.plugin.settings.ollama.models.completions || '');
+					dropdown.onChange(async (value) => {
+						this.plugin.settings.ollama.models.completions = value;
+						await this.plugin.saveSettings();
+					});
+					dropdownRefs['completions'] = dropdown;
+				});
+			// Rewrite Model Dropdown
+			new Setting(containerEl)
+				.setName('Rewrite Model')
+				.setDesc('Model for rewriting text.')
+				.addDropdown((dropdown) => {
+					dropdown.addOption('', 'Manual entry');
+
+					// Add all discovered models
+					for (const { model } of allDiscoveredModels.values()) {
+						dropdown.addOption(model, model);
+					}
+
+					dropdown.setValue(this.plugin.settings.ollama.models.rewrite || '');
+					dropdown.onChange(async (value) => {
+						this.plugin.settings.ollama.models.rewrite = value;
+						await this.plugin.saveSettings();
+					});
+					dropdownRefs['rewrite'] = dropdown;
+				});
+
+			// Model discovery is now handled per-endpoint in the endpoints configuration above
+			// This allows discovering models from different endpoints with different API keys
+
+			// Provider priority/fallback UI
+			new Setting(containerEl)
+				.setName('Provider Priority (Fallback Order)')
+				.setDesc('Set the order of providers for each use case. Highest priority first. Drag to reorder.')
+				.addTextArea((area) => {
+					area.inputEl.rows = 4;
+					area.inputEl.cols = 40;
+					area.setValue(
+						(
+							this.plugin.settings.ollama.providerPriority || ['lmstudio', 'ollama', 'gemini', 'http://localhost:11434']
+						).join('\n')
+					);
+					area.onChange(async (value) => {
+						this.plugin.settings.ollama.providerPriority = value
+							.split('\n')
+							.map((v) => v.trim())
+							.filter(Boolean);
+						await this.plugin.saveSettings();
+					});
+				});
 
 			new Setting(containerEl)
 				.setName('Summary Model')
@@ -1070,6 +1560,46 @@ export default class ObsidianGeminiSettingTab extends PluginSettingTab {
 							})
 					);
 			}
+		}
+
+		// Background Tasks Section
+		containerEl.createEl('h3', { text: 'Background Tasks' });
+
+		new Setting(containerEl)
+			.setName('Enable background tasks')
+			.setDesc(
+				'Allow processing of AI requests in the background while Obsidian is running. Tasks will continue even when the app is minimized.'
+			)
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.backgroundTasksEnabled).onChange(async (value) => {
+					this.plugin.settings.backgroundTasksEnabled = value;
+					await this.plugin.saveSettings();
+				})
+			);
+
+		if (this.plugin.settings.backgroundTasksEnabled) {
+			new Setting(containerEl)
+				.setName('Background notifications')
+				.setDesc(
+					'Show system notifications when background tasks complete. On desktop, shows native notifications. On mobile, shows extended in-app notices.'
+				)
+				.addToggle((toggle) =>
+					toggle.setValue(this.plugin.settings.backgroundNotificationsEnabled).onChange(async (value) => {
+						this.plugin.settings.backgroundNotificationsEnabled = value;
+						await this.plugin.saveSettings();
+					})
+				);
+
+			new Setting(containerEl)
+				.setName('View background tasks')
+				.setDesc('Monitor and manage queued background tasks.')
+				.addButton((button) =>
+					button.setButtonText('Open Task Manager').onClick(() => {
+						const { BackgroundTasksModal } = require('../ui/background-tasks-modal');
+						const modal = new BackgroundTasksModal(this.app, this.plugin.backgroundTaskService);
+						modal.open();
+					})
+				);
 		}
 	}
 }

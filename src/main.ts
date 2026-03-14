@@ -16,6 +16,7 @@ import { RewriteInstructionsModal } from './ui/rewrite-modal';
 import { V4WelcomeModal } from './ui/v4-welcome-modal';
 import { UpdateNotificationModal } from './ui/update-notification-modal';
 import { HistoryArchiver } from './migrations/history-archiver';
+import { BackgroundTasksModal } from './ui/background-tasks-modal';
 import { SessionManager } from './agent/session-manager';
 import { ToolRegistry } from './tools/tool-registry';
 import { ToolExecutionEngine } from './tools/execution-engine';
@@ -28,10 +29,12 @@ import { DeepResearchService } from './services/deep-research';
 import { Logger } from './utils/logger';
 import { RagIndexingService } from './services/rag-indexing';
 import { SelectionActionService } from './services/selection-action-service';
+import { BackgroundTaskService } from './services/background-task-service';
 import { MCPManager } from './mcp/mcp-manager';
 import { MCPServerConfig } from './mcp/types';
 import { SkillManager } from './services/skill-manager';
 import { ModelProvider, RagProvider, ProviderModelConfig } from './api/types';
+import { GeminiCostMonitor } from './services/gemini-cost-monitor';
 
 // @ts-ignore
 import agentsMemoryTemplateContent from '../prompts/agentsMemoryTemplate.hbs';
@@ -53,11 +56,35 @@ export interface RagIndexingSettings {
 	provider: RagProvider;
 }
 
+/**
+ * Configuration for a single Ollama/LM Studio endpoint
+ */
+export interface OllamaEndpointConfig {
+	endpoint: string; // e.g., http://localhost:11434
+	apiKey?: string; // Optional API key for this specific endpoint
+	discoveredModels?: string[]; // Models discovered on this endpoint via /api/tags
+	lastDiscovered?: number; // Timestamp of last discovery
+	useLmStudioApi?: boolean; // If true, use LM Studio API format for this endpoint
+	// Per-endpoint model selection (overrides global models)
+	chatModel?: string;
+	summaryModel?: string;
+	completionsModel?: string;
+	rewriteModel?: string;
+}
+
 export interface OllamaSettings {
-	endpoint: string;
+	// Support both old and new format for backward compatibility
+	endpoint?: string; // Legacy: single endpoint (migrated to endpoints[0])
+	fallbackEndpoints?: string[]; // Legacy: fallback endpoints (migrated to endpoints array)
+
+	// New format: list of endpoints with per-endpoint configuration
+	endpoints: OllamaEndpointConfig[];
+	primaryEndpointIndex: number; // Index of primary endpoint in endpoints array
+
 	models: ProviderModelConfig;
 	enabled: boolean;
-	apiKey?: string; // Optional API key for authentication (Bearer token or custom header)
+	useLmStudioApi?: boolean; // Toggle LM Studio API for local models
+	providerPriority?: string[]; // Priority order for providers (Gemini, Ollama, LM Studio, endpoints)
 }
 
 export interface ObsidianGeminiSettings {
@@ -91,6 +118,9 @@ export interface ObsidianGeminiSettings {
 	lastSeenVersion: string;
 	// RAG Indexing settings
 	ragIndexing: RagIndexingSettings;
+	// Background task settings
+	backgroundTasksEnabled: boolean;
+	backgroundNotificationsEnabled: boolean;
 	// MCP server settings
 	mcpEnabled: boolean;
 	mcpServers: MCPServerConfig[];
@@ -151,12 +181,24 @@ const DEFAULT_SETTINGS: ObsidianGeminiSettings = {
 	summaryProvider: ModelProvider.GEMINI,
 	completionsProvider: ModelProvider.GEMINI,
 	rewriteProvider: ModelProvider.GEMINI,
+	// Background task settings
+	backgroundTasksEnabled: true,
+	backgroundNotificationsEnabled: true,
 	// MCP server settings
 	mcpEnabled: false,
 	mcpServers: [],
 	// Ollama settings
 	ollama: {
-		endpoint: 'http://100.71.158.16:11434',
+		endpoint: 'http://100.71.158.16:11434', // Legacy: kept for migration
+		fallbackEndpoints: [], // Legacy: kept for migration
+		endpoints: [
+			{
+				endpoint: 'http://100.71.158.16:11434',
+				apiKey: '',
+				discoveredModels: [],
+			},
+		],
+		primaryEndpointIndex: 0,
 		models: {
 			chat: '',
 			summary: '',
@@ -165,7 +207,8 @@ const DEFAULT_SETTINGS: ObsidianGeminiSettings = {
 			embedding: '',
 		},
 		enabled: false,
-		apiKey: '', // Optional API key for secured Ollama deployments
+		useLmStudioApi: false, // Default to off
+		providerPriority: ['lmstudio', 'ollama', 'gemini', 'http://localhost:11434'],
 	},
 };
 
@@ -201,6 +244,7 @@ export default class ObsidianGemini extends Plugin {
 	public selectionActionService: SelectionActionService;
 	public mcpManager: MCPManager | null = null;
 	public skillManager: SkillManager;
+	public backgroundTaskService: BackgroundTaskService;
 
 	// Private members
 	private summarizer: GeminiSummary;
@@ -212,12 +256,18 @@ export default class ObsidianGemini extends Plugin {
 	private previousApiKey: string = '';
 	private previousRagEnabled: boolean = false;
 
+	// Cost monitor for Gemini API usage
+	public geminiCostMonitor: GeminiCostMonitor;
+
 	async onload() {
 		// Initialize logger early so it's available during setup
 		this.logger = new Logger(this);
 
 		// Load settings early
 		await this.loadSettings();
+
+		// Initialize cost monitor
+		this.geminiCostMonitor = new GeminiCostMonitor();
 
 		// Add settings tab early so users can configure API key even if plugin fails to fully initialize
 		this.addSettingTab(new ObsidianGeminiSettingTab(this.app, this));
@@ -476,6 +526,106 @@ export default class ObsidianGemini extends Plugin {
 				modal.open();
 			},
 		});
+
+		// Background task commands
+		this.addCommand({
+			id: 'gemini-scribe-background-chat',
+			name: 'Send to Background Chat',
+			editorCallback: async (editor: Editor, view: MarkdownView) => {
+				if (!this.checkInitialized()) return;
+				if (!this.settings.backgroundTasksEnabled) {
+					new Notice('Background tasks are disabled in settings');
+					return;
+				}
+				const selection = editor.getSelection();
+				if (!selection) {
+					new Notice('Please select some text to send to background chat');
+					return;
+				}
+
+				try {
+					const taskId = await this.backgroundTaskService.addTask({
+						type: 'chat',
+						prompt: selection,
+						filePath: view.file?.path,
+					});
+					new Notice(`Background chat task queued: ${taskId}`);
+				} catch (error) {
+					new Notice(`Failed to queue background task: ${error.message}`);
+				}
+			},
+		});
+
+		this.addCommand({
+			id: 'gemini-scribe-background-summarize',
+			name: 'Send to Background Summarize',
+			editorCallback: async (editor: Editor, view: MarkdownView) => {
+				if (!this.checkInitialized()) return;
+				if (!this.settings.backgroundTasksEnabled) {
+					new Notice('Background tasks are disabled in settings');
+					return;
+				}
+				const selection = editor.getSelection();
+				const textToSummarize = selection || editor.getValue();
+
+				if (!textToSummarize.trim()) {
+					new Notice('No content to summarize');
+					return;
+				}
+
+				try {
+					const taskId = await this.backgroundTaskService.addTask({
+						type: 'summary',
+						prompt: 'Please summarize this content',
+						context: textToSummarize,
+						filePath: view.file?.path,
+					});
+					new Notice(`Background summary task queued: ${taskId}`);
+				} catch (error) {
+					new Notice(`Failed to queue background task: ${error.message}`);
+				}
+			},
+		});
+
+		this.addCommand({
+			id: 'gemini-scribe-background-rewrite',
+			name: 'Send to Background Rewrite',
+			editorCallback: async (editor: Editor, view: MarkdownView) => {
+				if (!this.checkInitialized()) return;
+				if (!this.settings.backgroundTasksEnabled) {
+					new Notice('Background tasks are disabled in settings');
+					return;
+				}
+				const selection = editor.getSelection();
+				const textToRewrite = selection || editor.getValue();
+
+				if (!textToRewrite.trim()) {
+					new Notice('No content to rewrite');
+					return;
+				}
+
+				try {
+					const taskId = await this.backgroundTaskService.addTask({
+						type: 'rewrite',
+						prompt: 'Please rewrite this content',
+						context: textToRewrite,
+						filePath: view.file?.path,
+					});
+					new Notice(`Background rewrite task queued: ${taskId}`);
+				} catch (error) {
+					new Notice(`Failed to queue background task: ${error.message}`);
+				}
+			},
+		});
+
+		this.addCommand({
+			id: 'gemini-scribe-background-tasks',
+			name: 'View Background Tasks',
+			callback: () => {
+				const modal = new BackgroundTasksModal(this.app, this.backgroundTaskService);
+				modal.open();
+			},
+		});
 	}
 
 	/**
@@ -686,6 +836,9 @@ export default class ObsidianGemini extends Plugin {
 
 		// Initialize selection action service
 		this.selectionActionService = new SelectionActionService(this);
+
+		// Initialize background task service
+		this.backgroundTaskService = new BackgroundTaskService(this, this.logger);
 
 		// Initialize RAG indexing if enabled
 		// On startup, defer to onLayoutReady() to ensure metadata cache is ready
@@ -905,11 +1058,67 @@ export default class ObsidianGemini extends Plugin {
 			}
 		}
 
+		// Migration: convert old Ollama settings format to new per-endpoint format
+		this.migrateOllamaSettings();
+
 		// Only run model version updates if dynamic discovery is disabled
 		// When dynamic discovery is enabled, user model selections should be preserved
 		if (!this.settings.modelDiscovery?.enabled) {
 			await this.updateModelVersions();
 		}
+	}
+
+	/**
+	 * Migrate old Ollama settings (single endpoint + fallbacks) to new format (endpoints array)
+	 */
+	private migrateOllamaSettings() {
+		const ollama = this.settings.ollama as any;
+
+		// If already migrated, skip
+		if (ollama.endpoints && Array.isArray(ollama.endpoints) && ollama.primaryEndpointIndex !== undefined) {
+			return;
+		}
+
+		this.logger?.log('Migrating Ollama settings to per-endpoint format...');
+
+		const endpoints: OllamaEndpointConfig[] = [];
+
+		// Add primary endpoint
+		if (ollama.endpoint) {
+			endpoints.push({
+				endpoint: ollama.endpoint,
+				apiKey: ollama.apiKey || '',
+				discoveredModels: [],
+			});
+		}
+
+		// Add fallback endpoints
+		if (ollama.fallbackEndpoints && Array.isArray(ollama.fallbackEndpoints)) {
+			for (const ep of ollama.fallbackEndpoints) {
+				if (ep && typeof ep === 'string') {
+					endpoints.push({
+						endpoint: ep,
+						apiKey: '', // Fallbacks don't have API keys in old format
+						discoveredModels: [],
+					});
+				}
+			}
+		}
+
+		// Default to primary endpoint if none exist
+		if (endpoints.length === 0) {
+			endpoints.push({
+				endpoint: 'http://localhost:11434',
+				apiKey: '',
+				discoveredModels: [],
+			});
+		}
+
+		// Update settings with new format
+		(this.settings.ollama as any).endpoints = endpoints;
+		(this.settings.ollama as any).primaryEndpointIndex = 0;
+
+		this.logger?.log(`Migrated Ollama settings: ${endpoints.length} endpoint(s)`);
 	}
 
 	async updateModelVersions() {
@@ -1020,6 +1229,11 @@ export default class ObsidianGemini extends Plugin {
 		this.logger.debug('Unloading Gemini Scribe');
 		this.history?.onUnload();
 		this.ribbonIcon?.remove();
+
+		// Stop background task service
+		if (this.backgroundTaskService) {
+			this.backgroundTaskService.stop();
+		}
 
 		// Disconnect MCP servers
 		if (this.mcpManager) {

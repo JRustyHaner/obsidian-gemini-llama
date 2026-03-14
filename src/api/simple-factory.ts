@@ -58,6 +58,32 @@ export class GeminiClientFactory {
 		const provider = this.resolveProvider(plugin, useCase);
 		const fallbackProvider = this.resolveFallbackProvider(plugin, useCase, provider);
 
+		// Log resolved configuration for debugging
+		const providerName =
+			provider === ModelProvider.GEMINI ? 'GEMINI' : provider === ModelProvider.OLLAMA ? 'OLLAMA' : 'unknown';
+		const fallbackName = fallbackProvider
+			? fallbackProvider === ModelProvider.GEMINI
+				? 'GEMINI'
+				: fallbackProvider === ModelProvider.OLLAMA
+					? 'OLLAMA'
+					: 'unknown'
+			: 'none';
+		plugin.logger.log(`[Factory] Query started - Resolved settings:`, {
+			useCase,
+			provider: providerName,
+			fallbackProvider: fallbackName,
+			ollama: {
+				enabled: settings.ollama.enabled,
+				primaryEndpointIndex: settings.ollama.primaryEndpointIndex || 0,
+				primaryEndpoint: settings.ollama.endpoints?.[settings.ollama.primaryEndpointIndex || 0]?.endpoint,
+				useLmStudio: settings.ollama.endpoints?.[settings.ollama.primaryEndpointIndex || 0]?.useLmStudioApi,
+				chatModel: settings.ollama.models.chat,
+				summaryModel: settings.ollama.models.summary,
+				completionsModel: settings.ollama.models.completions,
+				rewriteModel: settings.ollama.models.rewrite,
+			},
+		});
+
 		// Create primary client
 		let primaryClient: ModelApi;
 		if (provider === ModelProvider.OLLAMA) {
@@ -79,6 +105,9 @@ export class GeminiClientFactory {
 				primary: primaryClient,
 				fallback: fallbackClient,
 				logger: plugin.logger,
+				plugin: plugin,
+				primaryName: provider,
+				fallbackName: fallbackProvider,
 			});
 		}
 
@@ -166,7 +195,7 @@ export class GeminiClientFactory {
 		const settings = plugin.settings;
 		const ollamaSettings = settings.ollama;
 
-		plugin.logger.log('[Factory] Creating Ollama client:', {
+		plugin.logger.debug('[Factory] Creating Ollama client:', {
 			useCase,
 			enabled: ollamaSettings.enabled,
 			endpoint: ollamaSettings.endpoint,
@@ -178,37 +207,139 @@ export class GeminiClientFactory {
 			return this.createGeminiClient(plugin, useCase, overrides);
 		}
 
+		// Get primary endpoint for model resolution
+		const primaryIndex = ollamaSettings.primaryEndpointIndex || 0;
+		const primaryEndpoint = ollamaSettings.endpoints?.[primaryIndex];
+
 		// Determine which model to use based on use case
+		// Try per-endpoint model first, fall back to global, then to default
 		let modelName: string;
+		let modelResolutionPath: string;
 		switch (useCase) {
 			case ModelUseCase.CHAT:
-				modelName = ollamaSettings.models.chat || getDefaultModelForRole('chat');
-				plugin.logger.log('[Factory] Chat model resolved to:', modelName);
+				if (primaryEndpoint?.chatModel) {
+					modelName = primaryEndpoint.chatModel;
+					modelResolutionPath = 'primaryEndpoint.chatModel';
+				} else if (ollamaSettings.models.chat) {
+					modelName = ollamaSettings.models.chat;
+					modelResolutionPath = 'global.chatModel';
+				} else {
+					modelName = getDefaultModelForRole('chat');
+					modelResolutionPath = 'default';
+				}
 				break;
 			case ModelUseCase.SUMMARY:
-				modelName = ollamaSettings.models.summary || getDefaultModelForRole('summary');
+				if (primaryEndpoint?.summaryModel) {
+					modelName = primaryEndpoint.summaryModel;
+					modelResolutionPath = 'primaryEndpoint.summaryModel';
+				} else if (ollamaSettings.models.summary) {
+					modelName = ollamaSettings.models.summary;
+					modelResolutionPath = 'global.summaryModel';
+				} else {
+					modelName = getDefaultModelForRole('summary');
+					modelResolutionPath = 'default';
+				}
 				break;
 			case ModelUseCase.COMPLETIONS:
-				modelName = ollamaSettings.models.completions || getDefaultModelForRole('completions');
+				if (primaryEndpoint?.completionsModel) {
+					modelName = primaryEndpoint.completionsModel;
+					modelResolutionPath = 'primaryEndpoint.completionsModel';
+				} else if (ollamaSettings.models.completions) {
+					modelName = ollamaSettings.models.completions;
+					modelResolutionPath = 'global.completionsModel';
+				} else {
+					modelName = getDefaultModelForRole('completions');
+					modelResolutionPath = 'default';
+				}
 				break;
 			case ModelUseCase.REWRITE:
-				modelName = ollamaSettings.models.rewrite || getDefaultModelForRole('chat');
+				if (primaryEndpoint?.rewriteModel) {
+					modelName = primaryEndpoint.rewriteModel;
+					modelResolutionPath = 'primaryEndpoint.rewriteModel';
+				} else if (ollamaSettings.models.rewrite) {
+					modelName = ollamaSettings.models.rewrite;
+					modelResolutionPath = 'global.rewriteModel';
+				} else {
+					modelName = getDefaultModelForRole('chat');
+					modelResolutionPath = 'default';
+				}
 				break;
 			case ModelUseCase.SEARCH:
-				modelName = ollamaSettings.models.chat || getDefaultModelForRole('chat');
+				if (primaryEndpoint?.chatModel) {
+					modelName = primaryEndpoint.chatModel;
+					modelResolutionPath = 'primaryEndpoint.chatModel';
+				} else if (ollamaSettings.models.chat) {
+					modelName = ollamaSettings.models.chat;
+					modelResolutionPath = 'global.chatModel';
+				} else {
+					modelName = getDefaultModelForRole('chat');
+					modelResolutionPath = 'default';
+				}
 				break;
 			default:
 				modelName = getDefaultModelForRole('chat');
+				modelResolutionPath = 'default';
 		}
 
-		// Build config for Ollama
+		// Log detailed model and endpoint resolution
+		plugin.logger.log(`[OllamaFactory] Query startup - Model & Endpoint Resolution:`, {
+			useCase: useCase.toString(),
+			resolvedModel: modelName,
+			modelResolutionPath,
+			primaryEndpointIndex: primaryIndex,
+			primaryEndpointUrl: primaryEndpoint?.endpoint,
+			primaryEndpointUseLmStudio: primaryEndpoint?.useLmStudioApi ?? false,
+			primaryEndpointApiKeyPresent: !!primaryEndpoint?.apiKey,
+			allEndpoints:
+				ollamaSettings.endpoints?.map((ep, idx) => ({
+					index: idx,
+					url: ep.endpoint,
+					useLmStudio: ep.useLmStudioApi ?? false,
+					chatModel: ep.chatModel || '(using global)',
+					summaryModel: ep.summaryModel || '(using global)',
+					completionsModel: ep.completionsModel || '(using global)',
+					rewriteModel: ep.rewriteModel || '(using global)',
+					discoveredModels: ep.discoveredModels?.slice(0, 3).join(', '),
+				})) || [],
+			globalModels: {
+				chat: ollamaSettings.models.chat,
+				summary: ollamaSettings.models.summary,
+				completions: ollamaSettings.models.completions,
+				rewrite: ollamaSettings.models.rewrite,
+			},
+		});
+
 		const config: OllamaClientConfig = {
-			endpoint: ollamaSettings.endpoint,
+			endpoints:
+				ollamaSettings.endpoints && ollamaSettings.endpoints.length > 0
+					? ollamaSettings.endpoints.map((ep) => ({
+							endpoint: ep.endpoint,
+							apiKey: ep.apiKey,
+							useLmStudioApi: ep.useLmStudioApi,
+							discoveredModels: ep.discoveredModels || [],
+							chatModel: ep.chatModel,
+							summaryModel: ep.summaryModel,
+							completionsModel: ep.completionsModel,
+							rewriteModel: ep.rewriteModel,
+						}))
+					: [
+							{
+								endpoint: ollamaSettings.endpoint || 'http://localhost:11434',
+								apiKey: (ollamaSettings as any).apiKey || '',
+								useLmStudioApi: ollamaSettings.useLmStudioApi || false,
+								discoveredModels: [],
+								chatModel: undefined,
+								summaryModel: undefined,
+								completionsModel: undefined,
+								rewriteModel: undefined,
+							},
+						],
+			primaryEndpointIndex: ollamaSettings.primaryEndpointIndex || 0,
 			model: modelName,
 			temperature: settings.temperature ?? 0.7,
 			topP: settings.topP ?? 0.95,
 			streamingEnabled: settings.streamingEnabled ?? true,
-			apiKey: ollamaSettings.apiKey, // Pass API key if configured
+			useLmStudioApi: ollamaSettings.useLmStudioApi || false,
 		};
 
 		// Create prompts and client

@@ -272,6 +272,7 @@ export class AgentViewTools {
 						message: followUpResponse.markdown,
 						notePath: '',
 						created_at: new Date(),
+						metadata: followUpResponse.metadata,
 					};
 					await this.context.displayMessage(aiEntry);
 
@@ -316,6 +317,7 @@ export class AgentViewTools {
 							message: retryResponse.markdown,
 							notePath: '',
 							created_at: new Date(),
+							metadata: retryResponse.metadata,
 						};
 						await this.context.displayMessage(aiEntry);
 
@@ -405,8 +407,20 @@ export class AgentViewTools {
 		const tool = this.plugin.toolRegistry.getTool(toolName);
 		const displayName = tool?.displayName || toolName;
 
+		// Special-case provider fallback to show friendly message
+		let titleText = `Executing: ${displayName}`;
+		if (toolName === 'provider-fallback') {
+			const provider = parameters?.fallback || parameters?.primary || this.plugin.settings?.chatProvider;
+			const model = parameters?.model || '';
+			if (parameters && typeof parameters.message === 'string' && parameters.message.trim()) {
+				titleText = parameters.message;
+			} else {
+				titleText = `Falling back to ${provider || 'provider'} : ${model || ''}`;
+			}
+		}
+
 		header.createSpan({
-			text: `Executing: ${displayName}`,
+			text: titleText,
 			cls: 'gemini-agent-tool-title',
 		});
 

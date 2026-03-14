@@ -16,6 +16,8 @@ export interface ModelResponse {
 	rendered: string;
 	thoughts?: string;
 	toolCalls?: ToolCall[];
+	/** Optional metadata such as token usage and cost estimates */
+	metadata?: Record<string, any>;
 }
 
 /**

@@ -4472,3 +4472,149 @@ If your plugin does not need CSS, delete this file.
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
+/* Background Tasks Modal Styles */
+
+.background-tasks-list {
+	max-height: 60vh;
+	overflow-y: auto;
+	margin: 20px 0;
+}
+
+.background-tasks-empty {
+	text-align: center;
+	color: var(--text-muted);
+	font-style: italic;
+	margin: 40px 0;
+}
+
+.background-task-item {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	padding: 16px;
+	margin-bottom: 12px;
+	background: var(--background-primary);
+}
+
+.background-task-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: 8px;
+}
+
+.background-task-type {
+	font-weight: 600;
+	color: var(--text-normal);
+}
+
+.background-task-date {
+	color: var(--text-muted);
+	font-size: 12px;
+}
+
+.background-task-status {
+	padding: 2px 8px;
+	border-radius: 12px;
+	font-size: 11px;
+	font-weight: 500;
+	text-transform: uppercase;
+}
+
+.status-queued {
+	background: var(--background-modifier-border);
+	color: var(--text-muted);
+}
+
+.status-processing {
+	background: var(--interactive-accent);
+	color: white;
+}
+
+.status-completed {
+	background: var(--text-success);
+	color: white;
+}
+
+.status-failed {
+	background: var(--text-error);
+	color: white;
+}
+
+.background-task-content {
+	margin-bottom: 12px;
+}
+
+.background-task-prompt {
+	margin: 0 0 8px 0;
+	font-size: 14px;
+	line-height: 1.4;
+}
+
+.background-task-context {
+	margin: 0;
+	font-size: 13px;
+	color: var(--text-muted);
+	font-style: italic;
+}
+
+.background-task-result {
+	margin-top: 12px;
+	padding: 12px;
+	background: var(--background-modifier-success);
+	border-radius: 4px;
+	border-left: 3px solid var(--text-success);
+}
+
+.background-task-result h4 {
+	margin: 0 0 8px 0;
+	color: var(--text-success);
+	font-size: 14px;
+}
+
+.background-task-result p {
+	margin: 0;
+	font-size: 13px;
+	line-height: 1.4;
+}
+
+.background-task-error {
+	margin-top: 12px;
+	padding: 12px;
+	background: var(--background-modifier-error);
+	border-radius: 4px;
+	border-left: 3px solid var(--text-error);
+}
+
+.background-task-error h4 {
+	margin: 0 0 8px 0;
+	color: var(--text-error);
+	font-size: 14px;
+}
+
+.background-task-error p {
+	margin: 0;
+	font-size: 13px;
+	line-height: 1.4;
+}
+
+.background-task-actions {
+	display: flex;
+	gap: 8px;
+	margin-top: 12px;
+}
+
+.background-task-action-btn {
+	padding: 6px 12px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 4px;
+	background: var(--background-secondary);
+	color: var(--text-normal);
+	cursor: pointer;
+	font-size: 12px;
+	transition: all 0.2s ease;
+}
+
+.background-task-action-btn:hover {
+	background: var(--interactive-hover);
+	border-color: var(--interactive-accent);
+}

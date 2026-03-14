@@ -96,6 +96,36 @@ export class AgentViewMessages {
 			cls: 'gemini-agent-message-time',
 		});
 
+		// If cost metadata is present, show a small cost badge in the header
+		const costMeta = entry.metadata?.gemini_cost;
+		if (costMeta && typeof costMeta.estimatedCostUsd === 'number') {
+			header.createEl('span', {
+				text: `Cost: $${costMeta.estimatedCostUsd.toFixed(6)}`,
+				cls: 'gemini-agent-message-cost',
+			});
+		}
+
+		// If this is a model message, attempt to show provider and model info
+		if (entry.role === 'model') {
+			try {
+				const provider =
+					entry.metadata?.provider ||
+					entry.metadata?.providerName ||
+					entry.metadata?.service ||
+					this.plugin.settings.chatProvider;
+				const modelName =
+					entry.model || entry.metadata?.model || entry.metadata?.modelName || this.plugin.settings.chatModelName;
+				if (provider || modelName) {
+					header.createEl('span', {
+						text: `${provider ? provider : ''}${provider && modelName ? ' · ' : ''}${modelName ? modelName : ''}`,
+						cls: 'gemini-agent-message-provider',
+					});
+				}
+			} catch (e) {
+				this.plugin.logger.debug('Failed to append provider/model info', e);
+			}
+		}
+
 		const content = messageDiv.createDiv({ cls: 'gemini-agent-message-content' });
 
 		// Check if this is a tool execution message from history
@@ -313,6 +343,41 @@ export class AgentViewMessages {
 
 			// Setup image click handlers
 			this.setupImageClickHandlers(messageDiv, sourcePath);
+
+			// Append cost badge to header if metadata available (streaming finalization)
+			try {
+				const header = messageContainer.querySelector('.gemini-agent-message-header') as HTMLElement | null;
+				const costMeta = entry.metadata?.gemini_cost;
+				if (header && costMeta && typeof costMeta.estimatedCostUsd === 'number') {
+					header.createEl('span', {
+						text: `Cost: $${costMeta.estimatedCostUsd.toFixed(6)}`,
+						cls: 'gemini-agent-message-cost',
+					});
+				}
+
+				// Append provider/model info for finalized streaming messages
+				if (header && entry.role === 'model') {
+					try {
+						const provider =
+							entry.metadata?.provider ||
+							entry.metadata?.providerName ||
+							entry.metadata?.service ||
+							this.plugin.settings.chatProvider;
+						const modelName =
+							entry.model || entry.metadata?.model || entry.metadata?.modelName || this.plugin.settings.chatModelName;
+						if (provider || modelName) {
+							header.createEl('span', {
+								text: `${provider ? provider : ''}${provider && modelName ? ' · ' : ''}${modelName ? modelName : ''}`,
+								cls: 'gemini-agent-message-provider',
+							});
+						}
+					} catch (e) {
+						this.plugin.logger.debug('Failed to append provider/model info on streaming finalize', e);
+					}
+				}
+			} catch (e) {
+				this.plugin.logger.debug('Failed to append cost badge on streaming finalize', e);
+			}
 		}
 	}
 

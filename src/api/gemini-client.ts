@@ -79,7 +79,20 @@ export class GeminiClient implements ModelApi {
 
 		try {
 			const response = await this.ai.models.generateContent(params);
-			return this.extractModelResponse(response);
+			const modelResp = this.extractModelResponse(response);
+
+			// Estimate token usage and cost, record to cost monitor and attach metadata
+			try {
+				const tokens = this.estimateTokens(request, modelResp);
+				const USD_PER_1K_TOKENS = 0.001; // Estimated USD per 1k tokens
+				const estimatedCostUsd = (tokens / 1000) * USD_PER_1K_TOKENS;
+				this.plugin?.geminiCostMonitor?.recordRequest(tokens, estimatedCostUsd);
+				modelResp.metadata = { ...(modelResp.metadata || {}), gemini_cost: { tokens, estimatedCostUsd } };
+			} catch (e) {
+				this.plugin?.logger?.warn('[GeminiClient] Failed to estimate/record cost', e);
+			}
+
+			return modelResp;
 		} catch (error) {
 			this.plugin?.logger.error('[GeminiClient] Error generating content:', error);
 			throw error;
@@ -168,12 +181,43 @@ export class GeminiClient implements ModelApi {
 			}
 		})();
 
+		// Wrap completion to estimate tokens/cost on finish and attach metadata
+		const wrappedComplete = (async (): Promise<ModelResponse> => {
+			const resp = await complete;
+			try {
+				const tokens = this.estimateTokens(request, resp);
+				const USD_PER_1K_TOKENS = 0.001;
+				const estimatedCostUsd = (tokens / 1000) * USD_PER_1K_TOKENS;
+				this.plugin?.geminiCostMonitor?.recordRequest(tokens, estimatedCostUsd);
+				resp.metadata = { ...(resp.metadata || {}), gemini_cost: { tokens, estimatedCostUsd } };
+			} catch (e) {
+				this.plugin?.logger?.warn('[GeminiClient] Failed to estimate/record cost (stream)', e);
+			}
+			return resp;
+		})();
+
 		return {
-			complete,
+			complete: wrappedComplete,
 			cancel: () => {
 				cancelled = true;
 			},
 		};
+	}
+
+	/**
+	 * Very small heuristic to estimate token usage based on request + response lengths
+	 */
+	private estimateTokens(request: BaseModelRequest | ExtendedModelRequest, response: ModelResponse): number {
+		try {
+			const reqStr = JSON.stringify(request || '');
+			const reqLen = reqStr.length;
+			const respLen = (response?.markdown || '').length;
+			// Approximate: 1 token ~= 4 characters
+			const tokens = Math.max(1, Math.round((reqLen + respLen) / 4));
+			return tokens;
+		} catch (e) {
+			return 1;
+		}
 	}
 
 	/**
@@ -406,7 +450,12 @@ export class GeminiClient implements ModelApi {
 	private extractTextFromChunk(chunk: any): string {
 		if (chunk.candidates?.[0]?.content?.parts) {
 			const text = chunk.candidates[0].content.parts
-				.filter((part: Part) => 'text' in part && part.text && !(part as PartWithThought).thought)
+				.filter((part: Part) => {
+					// Include parts with text that are NOT thinking parts
+					// Thinking parts have both .thought and .text fields - exclude those
+					const isThinkingPart = (part as PartWithThought).thought && (part as PartWithThought).text;
+					return 'text' in part && part.text && !isThinkingPart;
+				})
 				.map((part: Part) => (part as PartWithThought).text)
 				.join('');
 			return decodeHtmlEntities(text);

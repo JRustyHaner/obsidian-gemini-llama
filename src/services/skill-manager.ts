@@ -68,7 +68,14 @@ export class SkillManager {
 		const folder = this.plugin.app.vault.getAbstractFileByPath(skillsDir);
 
 		if (!folder || !(folder instanceof TFolder)) {
-			await this.plugin.app.vault.createFolder(skillsDir);
+			try {
+				await this.plugin.app.vault.createFolder(skillsDir);
+			} catch (error) {
+				const exists = await this.plugin.app.vault.adapter.exists(skillsDir);
+				if (!exists) {
+					throw error;
+				}
+			}
 		}
 	}
 
